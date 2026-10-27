@@ -1,6 +1,7 @@
 import atexit
 import functools
 import os
+import sys
 
 from pyspark.sql import SparkSession
 
@@ -49,6 +50,8 @@ def _build_spark_session() -> SparkSession:
         .config("spark.sql.adaptive.enabled", "true")
         .config("spark.sql.adaptive.coalescePartitions.enabled", "true")
         .config("spark.sql.adaptive.skewJoin.enabled", "true")
+        .config("spark.pyspark.python", sys.executable)
+        .config("spark.pyspark.driver.python", sys.executable)
         .getOrCreate()
     )
 
