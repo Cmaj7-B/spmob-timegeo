@@ -165,6 +165,7 @@ def plot_flow(
             lambda x: h3.cell_to_latlng(x)[1]
         )
 
+    df = df.dropna(subset=["origin_lat", "origin_lng", "destination_lat", "destination_lng"])
     max_count = df[(df["origin"] != df["destination"])]["flow"].max()
     unique_destinations = df["destination"].unique()
     unique_origins = df["origin"].unique()
@@ -180,7 +181,7 @@ def plot_flow(
         zoom_start=10,
         width=900,
         height=630,
-        tiles="CartoDB positron",
+        tiles="OpenStreetMap",
     )
 
     for idx, row in df.iterrows():
@@ -215,6 +216,8 @@ def plot_flow(
 
 
 def plot_count(df, h3_index_col_name, hex_resolution):
+    df = df.dropna(subset=[h3_index_col_name])
+    df = df[df[h3_index_col_name].astype(str).str.strip().ne("")].reset_index(drop=True)
     df["h3_res"] = df[h3_index_col_name].apply(
         lambda x: h3.cell_to_parent(x, hex_resolution)
     )
@@ -223,6 +226,7 @@ def plot_count(df, h3_index_col_name, hex_resolution):
 
     count_df["latitude"] = count_df["h3_res"].apply(lambda x: h3.cell_to_latlng(x)[0])
     count_df["longitude"] = count_df["h3_res"].apply(lambda x: h3.cell_to_latlng(x)[1])
+    count_df = count_df.dropna(subset=["latitude", "longitude"])
     map_center = [count_df["latitude"].mean(), count_df["longitude"].mean()]
 
     m = folium.Map(
@@ -230,7 +234,7 @@ def plot_count(df, h3_index_col_name, hex_resolution):
         zoom_start=10,
         width=900,
         height=630,
-        tiles="CartoDB positron",
+        tiles="OpenStreetMap",
     )
     colormap = linear.Blues_09.scale(
         count_df["log_count"].min(), count_df["log_count"].max()

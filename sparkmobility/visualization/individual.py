@@ -27,7 +27,7 @@ def plot_trajectories(df, latitude_col="latitude", longitude_col="longitude"):
         df["longitude"] = df["h3_index"].apply(lambda x: h3.cell_to_latlng(x)[1])
         map_center = [df["latitude"].mean(), df["longitude"].mean()]
 
-    m = folium.Map(location=map_center, zoom_start=12, tiles="CartoDB positron")
+    m = folium.Map(location=map_center, zoom_start=12, tiles="OpenStreetMap")
     coordinates = df[["latitude", "longitude"]].values.tolist()
     folium.PolyLine(
         locations=coordinates, color=custom_colors[-1], weight=2.5, opacity=0.8
