@@ -140,6 +140,10 @@ class CppModuleHandler:
         slot_interval: int = 600,
         rho: float = 0.6,
         gamma: float = -0.21,
+        week_num_thres: float = 2.0,
+        tz_offset_seconds: int = 0,
+        grid: int = 0,
+        seed: int = -1,
         quiet: bool = True,
         timeout: int = 3600,
     ) -> bool:
@@ -159,6 +163,10 @@ class CppModuleHandler:
             str(slot_interval),
             str(rho),
             str(gamma),
+            str(week_num_thres),
+            str(tz_offset_seconds),
+            str(grid),
+            str(seed),
         ]
         if quiet:
             cmd.append("--quiet")

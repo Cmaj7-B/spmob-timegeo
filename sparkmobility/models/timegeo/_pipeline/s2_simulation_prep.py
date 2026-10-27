@@ -599,133 +599,57 @@ def activeness(
     output_path="./results/Simulation/activeness.txt",
 ):
     """
-    Generate activeness patterns for simulation.
-    If input files are empty or missing, create realistic default patterns.
+    Combine the daily and weekly circadian profiles written by the parameter
+    binary into the 1008-slot weekly activeness the simulator reads
+    (daily x weekly, one line for non-commuters, one for commuters).
+
+    A missing or degenerate profile is an error: the simulator must not run
+    on a made-up circadian rhythm. When one class has no users, its profile
+    is taken from the other class so the file keeps two lines.
     """
 
-    def read_activeness_file(file_path):
-        """Read activeness file, return default pattern if file is empty or missing."""
-        activeness_data = []
+    def read_profile(file_path, expected_len):
+        if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
+            return None
+        with open(file_path, "r") as f:
+            values = [float(line.strip()) for line in f if line.strip()]
+        if len(values) != expected_len:
+            raise RuntimeError(
+                f"{file_path}: expected {expected_len} values, found {len(values)}"
+            )
+        if sum(1 for x in values if x > 0) <= 1:
+            # the binary writes an all-zero profile for a class with no fitted users;
+            # treat it as absent so the other class's profile is reused (below)
+            logger.warning(f"{file_path}: no activity accumulated for this class")
+            return None
+        return values
 
-        # First try the specified path
-        try:
-            if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-                with open(file_path, "r") as f:
-                    for line in f:
-                        activeness_data.append(float(line.strip()))
+    noncomm_daily = read_profile(noncomm_daily_path, 144)
+    noncomm_weekly = read_profile(noncomm_weekly_path, 7)
+    comm_daily = read_profile(comm_daily_path, 144)
+    comm_weekly = read_profile(comm_weekly_path, 7)
 
-                # If file has meaningful data (not all zeros and not single 1.0), return it
-                non_zero_count = sum(1 for x in activeness_data if x > 0)
-                total_activity = sum(activeness_data)
+    if comm_daily is None and noncomm_daily is None:
+        raise RuntimeError("no circadian profile was written for either user class")
+    if comm_daily is None:
+        logger.warning("no commuter profile; using the non-commuter profile for commuters")
+        comm_daily, comm_weekly = noncomm_daily, noncomm_weekly
+    if noncomm_daily is None:
+        logger.warning("no non-commuter profile; using the commuter profile for non-commuters")
+        noncomm_daily, noncomm_weekly = comm_daily, comm_weekly
 
-                # Check for meaningful patterns: more than 1 non-zero value and reasonable distribution
-                if non_zero_count > 1 and total_activity > 0.1:
-                    logger.info(f"Using activeness file: {file_path}")
-                    return activeness_data
-                else:
-                    logger.warning(
-                        f"Warning: Activity file {file_path} has poor pattern (non-zero: {non_zero_count}, total: {total_activity:.3f})."
-                    )
-
-        except Exception as e:
-            logger.error(f"Warning: Error reading activeness file {file_path}: {e}")
-
-        # If the specified path failed, try fallback to root directory
-        fallback_path = None
-        if "NonComm_pt_daily" in file_path:
-            fallback_path = "./Comm_pt_daily.txt"  # Use commuter file as fallback
-        elif "NonComm_pt_weekly" in file_path:
-            fallback_path = "./Comm_pt_weekly.txt"  # Use commuter file as fallback
-        elif "Comm_pt_daily" in file_path:
-            fallback_path = "./Comm_pt_daily.txt"
-        elif "Comm_pt_weekly" in file_path:
-            fallback_path = "./Comm_pt_weekly.txt"
-
-        if fallback_path and os.path.exists(fallback_path):
-            logger.info(f"Trying fallback activeness file: {fallback_path}")
-            try:
-                with open(fallback_path, "r") as f:
-                    for line in f:
-                        activeness_data.append(float(line.strip()))
-
-                non_zero_count = sum(1 for x in activeness_data if x > 0)
-                total_activity = sum(activeness_data)
-
-                if non_zero_count > 1 and total_activity > 0.1:
-                    logger.info(f"Using fallback activeness file: {fallback_path}")
-                    return activeness_data
-                else:
-                    logger.warning(
-                        f"Warning: Fallback activity file {fallback_path} also has poor pattern."
-                    )
-
-            except Exception as e:
-                logger.error(
-                    f"Warning: Error reading fallback activeness file {fallback_path}: {e}"
-                )
-
-        # If all files failed, generate default patterns
-        logger.info(f"Generating default activeness pattern for: {file_path}")
-
-        # Generate default patterns if file is empty/missing/all zeros
-        if "daily" in file_path:
-            # Create realistic daily activity pattern (144 time slots = 24 hours * 6 slots per hour)
-            # Higher activity during day hours (6 AM to 10 PM), lower at night
-            daily_pattern = []
-            for slot in range(144):
-                hour = slot // 6  # Convert slot to hour (0-23)
-                if 6 <= hour <= 22:  # Active hours 6 AM to 10 PM
-                    # Peak activity during commute times and lunch
-                    if hour in [7, 8, 12, 17, 18]:
-                        activity = 0.25  # Higher activity during peak times
-                    elif hour in [9, 10, 11, 13, 14, 15, 16, 19, 20]:
-                        activity = 0.15  # Medium activity during work/day hours
-                    else:
-                        activity = 0.08  # Lower activity during other day hours
-                else:  # Night hours (11 PM to 5 AM)
-                    activity = 0.02  # Very low activity at night
-                daily_pattern.append(activity)
-
-            # Normalize to sum to approximately 1.0
-            total = sum(daily_pattern)
-            return [x / total for x in daily_pattern]
-
-        else:  # weekly pattern
-            # Create weekly pattern (7 days) with higher activity on weekdays
-            weekly_pattern = [
-                0.16,  # Monday
-                0.16,  # Tuesday
-                0.16,  # Wednesday
-                0.16,  # Thursday
-                0.15,  # Friday (slightly lower)
-                0.11,  # Saturday (lower weekend activity)
-                0.10,  # Sunday (lowest activity)
-            ]
-            return weekly_pattern
-
-    # Read all activeness files
-    noncomm_daily = read_activeness_file(noncomm_daily_path)
-    noncomm_weekly = read_activeness_file(noncomm_weekly_path)
-    comm_daily = read_activeness_file(comm_daily_path)
-    comm_weekly = read_activeness_file(comm_weekly_path)
-
-    # FIX: Use original format - 2 lines with combined daily*weekly patterns
-    # Non-commuter probabilities (daily * weekly for each day)
+    # the estimator indexes the weekly profile by epoch day % 7, so position 0 is Thursday;
+    # the simulator reads position 0 as Monday (docs/WEEKDAY_INDEX_BUG.md). rotate by 3.
+    noncomm_weekly = noncomm_weekly[3:] + noncomm_weekly[:3]
+    comm_weekly = comm_weekly[3:] + comm_weekly[:3]
     nonCommuterPt = [d * w for w in noncomm_weekly for d in noncomm_daily]
-
-    # Commuter probabilities (daily * weekly for each day)
     commuterPt = [d * w for w in comm_weekly for d in comm_daily]
 
-    # Write to output file in original format (2 lines)
     with open(output_path, "w") as f:
         f.write(" ".join(map(str, nonCommuterPt)) + "\n")
         f.write(" ".join(map(str, commuterPt)) + "\n")
 
     logger.info(f"Activeness patterns written to: {output_path}")
-    logger.info(f"  Non-commuter daily pattern: {len(noncomm_daily)} time slots")
-    logger.info(f"  Commuter daily pattern: {len(comm_daily)} time slots")
-    logger.info(f"  Non-commuter weekly pattern: {len(noncomm_weekly)} days")
-    logger.info(f"  Commuter weekly pattern: {len(comm_weekly)} days")
 
 
 def otherLocations(

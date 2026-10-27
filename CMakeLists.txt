@@ -1,58 +1,27 @@
 cmake_minimum_required(VERSION 3.20)
-project(sparkmobility_native LANGUAGES CXX)
-
+project(timegeo_port LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_BUILD_TYPE Release)
 
 find_package(Arrow REQUIRED)
 find_package(Parquet REQUIRED)
-find_package(h3 CONFIG REQUIRED)
-find_package(Snappy CONFIG)
-if(NOT Snappy_FOUND)
-  find_library(SNAPPY_LIBRARY NAMES snappy REQUIRED)
-  find_path(SNAPPY_INCLUDE_DIR snappy.h REQUIRED)
-endif()
-# Apple Clang doesn't ship OpenMP and FindOpenMP can't locate brew's keg-only
-# libomp without hints. Supply the flags + library path so find_package(OpenMP)
-# succeeds with the libomp installed by `brew install libomp`.
-if(APPLE)
-  execute_process(
-    COMMAND brew --prefix libomp
-    OUTPUT_VARIABLE LIBOMP_PREFIX
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-  )
-  set(OpenMP_C_FLAGS "-Xpreprocessor -fopenmp -I${LIBOMP_PREFIX}/include")
-  set(OpenMP_CXX_FLAGS "-Xpreprocessor -fopenmp -I${LIBOMP_PREFIX}/include")
-  set(OpenMP_C_LIB_NAMES "omp")
-  set(OpenMP_CXX_LIB_NAMES "omp")
-  set(OpenMP_omp_LIBRARY "${LIBOMP_PREFIX}/lib/libomp.dylib")
-endif()
+# conda-forge's exported h3::h3 target references a build-machine libm path; link by file instead
+find_library(H3_LIBRARY NAMES h3 REQUIRED)
+find_path(H3_INCLUDE_DIR h3/h3api.h REQUIRED)
 find_package(OpenMP REQUIRED)
+find_package(Snappy CONFIG)
 
-add_executable(module_2_3_1
-  sparkmobility/models/timegeo/_native/module_2_3_1.cpp
-)
+# unmodified upstream module (environment proof)
+add_executable(module_2_3_1_upstream module_2_3_1.cpp)
+target_include_directories(module_2_3_1_upstream PRIVATE ${H3_INCLUDE_DIR})
+target_link_libraries(module_2_3_1_upstream PRIVATE Arrow::arrow_shared Parquet::parquet_shared ${H3_LIBRARY} OpenMP::OpenMP_CXX)
 
-target_link_libraries(module_2_3_1 PRIVATE
-  Arrow::arrow_shared
-  Parquet::parquet_shared
-  h3::h3
-  OpenMP::OpenMP_CXX
-)
+# ported module
+add_executable(module_2_3_1_port module_2_3_1_port.cpp)
+target_link_libraries(module_2_3_1_port PRIVATE Arrow::arrow_shared Parquet::parquet_shared)
 
 if(Snappy_FOUND)
-  target_link_libraries(module_2_3_1 PRIVATE Snappy::snappy)
-else()
-  target_include_directories(module_2_3_1 PRIVATE ${SNAPPY_INCLUDE_DIR})
-  target_link_libraries(module_2_3_1 PRIVATE ${SNAPPY_LIBRARY})
+  target_link_libraries(module_2_3_1_upstream PRIVATE Snappy::snappy)
+  target_link_libraries(module_2_3_1_port PRIVATE Snappy::snappy)
 endif()
-
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  target_link_libraries(module_2_3_1 PRIVATE stdc++fs)
-endif()
-
-install(
-  TARGETS module_2_3_1
-  RUNTIME DESTINATION sparkmobility/models/timegeo/_native
-)

@@ -12,8 +12,11 @@ Matches the fit/generate surface used by `Gravity` and `EPR`:
 from __future__ import annotations
 
 import logging
+import random
 import shutil
 import tempfile
+
+import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Optional, Union
@@ -54,7 +57,21 @@ from sparkmobility.models.timegeo.paths import TimeGeoPaths
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_B_ARRAY = list(range(1, 21))
+def _read_grid(grid_file: Path):
+    """Read the two parameter grids the binary wrote next to its parameter file.
+
+    The binary writes grid indices into ParametersCommuters.txt; decoding must
+    use the exact arrays compiled into that run, so they are read back from
+    GridCommuters.txt / GridNonCommuters.txt rather than assumed.
+    """
+    with open(grid_file, "r") as f:
+        lines = [line.split() for line in f if line.strip()]
+    b1 = [float(v) for v in lines[0]]
+    b2 = [float(v) for v in lines[1]]
+    return b1, b2
+
+
+_GRID_CODES = {"paper": 0, "lab": 1}
 
 
 class TimeGeo:
@@ -64,15 +81,18 @@ class TimeGeo:
         self,
         num_days: int = 1,
         num_cpus: int = 8,
-        sample_fraction: float = 1.0,
+        sample_fraction: float = 0.02,
         min_unique_locations: int = 15,
         skip_frequent_user_extraction: bool = False,
-        min_num_stay: int = 1,
+        min_num_stay: int = 50,
         max_num_stay: int = 100000,
         rho: float = 0.6,
         gamma: float = -0.21,
         nw_thres: float = 1.0,
         slot_interval: int = 600,
+        week_num_thres: float = 2.0,
+        tz_offset_seconds: int = 0,
+        grid: str = "paper",
         work_prob_weekday: float = 0.829,
         work_prob_weekend: float = 0.354,
         reg_prob: float = 0.846,
@@ -94,6 +114,11 @@ class TimeGeo:
         self.gamma = gamma
         self.nw_thres = nw_thres
         self.slot_interval = slot_interval
+        self.week_num_thres = week_num_thres
+        self.tz_offset_seconds = tz_offset_seconds
+        if grid not in _GRID_CODES:
+            raise ValueError(f"grid must be one of {sorted(_GRID_CODES)}")
+        self.grid = grid
         self.work_prob_weekday = work_prob_weekday
         self.work_prob_weekend = work_prob_weekend
         self.reg_prob = reg_prob
@@ -121,12 +146,16 @@ class TimeGeo:
         self,
         stay_df: "Union[pd.DataFrame, SparkDataFrame]",
         user_column: str = "caid",
-        timestamp_column: str = "stay_start_timestamp",
+        timestamp_column: str = "local_time",
         location_column: str = "h3_id_region",
         type_column: str = "type",
         work_dir: Optional[Path | str] = None,
     ) -> Dict[str, Any]:
         """Estimate parameters from a stay-point DataFrame.
+
+        ``timestamp_column`` is read as local wall-clock time: the binary slots
+        stays into hours of the local day with ``tz_offset_seconds`` (default 0)
+        subtracted, so pass ``local_time`` (the default) or set the offset.
 
         Accepts either a pandas DataFrame or a pyspark.sql.DataFrame.
         Spark inputs run stage 1 (align) natively in Spark; later stages
@@ -135,6 +164,9 @@ class TimeGeo:
         under ``work_dir`` (tempdir by default) and returns a stats dict.
         Call :meth:`generate` afterwards.
         """
+        if self.random_state is not None:
+            random.seed(self.random_state)
+            np.random.seed(self.random_state)
         if work_dir is None:
             self._paths = TimeGeoPaths(Path(tempfile.mkdtemp(prefix="timegeo_")))
             self._work_dir_is_temp = True
@@ -227,6 +259,10 @@ class TimeGeo:
                 slot_interval=self.slot_interval,
                 rho=self.rho,
                 gamma=self.gamma,
+                week_num_thres=self.week_num_thres,
+                tz_offset_seconds=self.tz_offset_seconds,
+                grid=_GRID_CODES[self.grid],
+                seed=(-1 if self.random_state is None else int(self.random_state) + (1 if commuter_mode else 0)),
             )
 
         with ThreadPoolExecutor(max_workers=2) as pool:
@@ -252,9 +288,15 @@ class TimeGeo:
             raise RuntimeError(
                 "parameter estimation produced no commuter or non-commuter records"
             )
+        grid_file = (
+            self._paths.parameters_commuters / "GridCommuters.txt"
+            if num_commuters > 0
+            else self._paths.parameters_noncommuters / "GridNonCommuters.txt"
+        )
+        b1_array, b2_array = _read_grid(grid_file)
         decode_and_write_parameters(
-            b1_array=_DEFAULT_B_ARRAY,
-            b2_array=_DEFAULT_B_ARRAY,
+            b1_array=b1_array,
+            b2_array=b2_array,
             commuter_input_path=str(commuter_raw),
             noncommuter_input_path=str(noncommuter_raw),
             commuter_output_path=str(commuter_dec),
@@ -332,6 +374,9 @@ class TimeGeo:
         """
         if not self.fitted_ or self._paths is None:
             raise RuntimeError("TimeGeo.generate() requires a prior fit() call")
+        if self.random_state is not None:
+            random.seed(self.random_state)
+            np.random.seed(self.random_state)
 
         sim_dir = self._paths.simulation
         simulate_all_parallel(
