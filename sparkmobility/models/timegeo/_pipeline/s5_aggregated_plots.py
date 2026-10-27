@@ -416,20 +416,21 @@ def plot_stay_durations_parquet(
     sim_time_col = "timeslot" if "timeslot" in sim_df.columns else "time_slot"
     sim_durations = get_durations_in_hours(sim_df, sim_user_col, sim_time_col)
 
-    # Read CDR durations — vectorized via groupby.diff on per-user sorted times
-    cdr_df = read_parquet_robust(cdr_parquet)
-    cdr_user_col = "caid"
-    cdr_time_col = "timestamp"
-    cdr_sorted = cdr_df.sort_values([cdr_user_col, cdr_time_col])
-    diffs = cdr_sorted.groupby(cdr_user_col)[cdr_time_col].diff().dropna()
-    cdr_durations = diffs[diffs > 0].values / 3600.0
+    # Read CDR durations (optional — may be None when called without observed data)
+    cdr_durations = np.array([])
+    if cdr_parquet is not None:
+        cdr_df = read_parquet_robust(cdr_parquet)
+        cdr_user_col = "caid"
+        cdr_time_col = "timestamp"
+        cdr_sorted = cdr_df.sort_values([cdr_user_col, cdr_time_col])
+        diffs = cdr_sorted.groupby(cdr_user_col)[cdr_time_col].diff().dropna()
+        cdr_durations = diffs[diffs > 0].values / 3600.0
 
     # Bin edges for histogram (in hours)
     bins = np.arange(xlim[0], xlim[1] + bin_width, bin_width)
 
     # Compute PDFs
     sim_hist, bin_edges = np.histogram(sim_durations, bins=bins, density=True)
-    cdr_hist, _ = np.histogram(cdr_durations, bins=bins, density=True)
     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
 
     # Plot
@@ -438,22 +439,23 @@ def plot_stay_durations_parquet(
     ax.set_yscale("log")
     plt.xlim(*xlim)
 
-    # Scatter CDR data
-    ax.scatter(
-        bin_centers,
-        cdr_hist,
-        color="g",
-        marker="o",
-        facecolor="white",
-        label="Observed",
-        s=20,
-    )
+    # Scatter CDR data (only if observed data was provided)
+    if len(cdr_durations) > 0:
+        cdr_hist, _ = np.histogram(cdr_durations, bins=bins, density=True)
+        ax.scatter(
+            bin_centers,
+            cdr_hist,
+            color="g",
+            marker="o",
+            facecolor="white",
+            label="Observed",
+            s=20,
+        )
+        print("Stay Durations (Observed):", bin_centers, cdr_hist)
+
     # Plot simulation PDF
     ax.plot(bin_centers, sim_hist, color="g", label="Simulated")
-
-    # Output durations to console
     print("Stay Durations (Simulated):", bin_centers, sim_hist)
-    print("Stay Durations (Observed):", bin_centers, cdr_hist)
 
     plt.ylim(*ylim)
     plt.xlabel("Duration of Stay (h)")
@@ -679,17 +681,16 @@ def plot_trip_distance_parquet(sim_parquet, cdr_parquet, output_file):
         usersDailyLocationCount, usersTripDistances = parse_simulation_results_parquet(
             sim_parquet
         )
-        user1ObsLocationCount, user1ObsTripDistances = parse_observed_data_parquet(
-            cdr_parquet
-        )
 
         if not usersTripDistances:
             print("No simulation trip distance data available")
             return
 
-        if not user1ObsTripDistances:
-            print("No observed trip distance data available")
-            return
+        user1ObsLocationCount, user1ObsTripDistances = [], []
+        if cdr_parquet is not None:
+            user1ObsLocationCount, user1ObsTripDistances = parse_observed_data_parquet(
+                cdr_parquet
+            )
 
         # Process observed trip distances
         from math import ceil
@@ -874,44 +875,38 @@ def plot_location_rank_parquet(sim_parquet, cdr_parquet, output_file, top_n=50):
         if total > 0:
             cum_probs = [float(x) / total for x in cum_probs]
 
-        # Parse observed data
-        df_cdr = read_parquet_robust(cdr_parquet)
+        # Parse observed data (optional — may be None)
+        cum_probs1 = None
+        if cdr_parquet is not None:
+            df_cdr = read_parquet_robust(cdr_parquet)
 
-        if len(df_cdr) == 0:
-            print("No CDR data available")
-            return
+            if len(df_cdr) > 0:
+                cdr_loc_counts = (
+                    df_cdr.groupby(["caid", "Longitude", "Latitude"])
+                    .size()
+                    .rename("count")
+                    .reset_index()
+                )
+                cdr_loc_counts["rank"] = (
+                    cdr_loc_counts.groupby("caid")["count"]
+                    .rank(method="first", ascending=False)
+                    .astype(int)
+                )
+                cdr_loc_counts = cdr_loc_counts[cdr_loc_counts["rank"] <= top_n]
+                cdr_rank_totals = cdr_loc_counts.groupby("rank")["count"].sum()
+                counts1 = [int(cdr_rank_totals.get(r + 1, 0)) for r in range(top_n)]
 
-        # Aggregate observed across ALL CDR users (same shape as simulation side):
-        # per-user location counts → per-user rank → sum counts at each rank.
-        cdr_loc_counts = (
-            df_cdr.groupby(["caid", "Longitude", "Latitude"])
-            .size()
-            .rename("count")
-            .reset_index()
-        )
-        cdr_loc_counts["rank"] = (
-            cdr_loc_counts.groupby("caid")["count"]
-            .rank(method="first", ascending=False)
-            .astype(int)
-        )
-        cdr_loc_counts = cdr_loc_counts[cdr_loc_counts["rank"] <= top_n]
-        cdr_rank_totals = cdr_loc_counts.groupby("rank")["count"].sum()
-        counts1 = [int(cdr_rank_totals.get(r + 1, 0)) for r in range(top_n)]
-
-        total1 = sum(counts1)
-        if total1 > 0:
-            cum_probs1 = [float(x) / total1 for x in counts1]
-        else:
-            cum_probs1 = [0] * top_n
-
+                total1 = sum(counts1)
+                if total1 > 0:
+                    cum_probs1 = [float(x) / total1 for x in counts1]
         # Create plot
         fig = plt.figure(figsize=(4, 3))
         ax = fig.add_subplot(1, 1, 1)
         ax.set_yscale("log")
         ax.set_xscale("log")
 
-        # Plot observed data
-        if any(p > 0 for p in cum_probs1):
+        # Plot observed data (only if provided)
+        if cum_probs1 is not None and any(p > 0 for p in cum_probs1):
             ax.scatter(
                 range(1, len(cum_probs1) + 1),
                 cum_probs1,

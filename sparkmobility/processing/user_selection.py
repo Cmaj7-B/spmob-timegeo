@@ -100,6 +100,23 @@ class UserSelection:
 
     @staticmethod
     def _visualize(active_level, num_stay_points_range, time_span_days_range):
+        # One pivot cell per exact stay count and day is unreadable once users
+        # spread over hundreds of values; bin both axes (10 stays, 5 days) when
+        # they do. Tick labels and the selection box follow the binned values.
+        active_level = active_level.copy()
+        if active_level["num_stays"].nunique() > 100:
+            # a handful of extreme users would otherwise stretch the x-axis and
+            # squeeze everyone else into its left edge; the last column collects them
+            cap = int(
+                np.repeat(active_level["num_stays"], active_level["count"]).quantile(0.99)
+            )
+            active_level["num_stays"] = active_level["num_stays"].clip(upper=cap)
+            active_level["num_stays"] = (active_level["num_stays"] // 10) * 10
+        if active_level["duration_days"].nunique() > 60:
+            active_level["duration_days"] = (active_level["duration_days"] // 5) * 5
+        active_level = active_level.groupby(
+            ["duration_days", "num_stays"], as_index=False
+        )["count"].sum()
         pivot = active_level.pivot(
             index="duration_days", columns="num_stays", values="count"
         ).fillna(0)
@@ -119,13 +136,24 @@ class UserSelection:
         ax.yaxis.grid(False)
         im = ax.imshow(masked_data, aspect="auto", cmap=cmap_masked)
 
+        # imshow places cell k of the pivot at coordinate k, so the selection box
+        # must be drawn at the positions of the requested values among the
+        # distinct values present, not at the values themselves.
+        cols = log_data.columns.values
+        rows = log_data.index.values
+        x0 = np.searchsorted(cols, num_stay_points_range[0]) - 0.5
+        x1 = np.searchsorted(cols, num_stay_points_range[1], side="right") - 0.5
+        y0 = np.searchsorted(rows, time_span_days_range[0]) - 0.5
+        y1 = np.searchsorted(rows, time_span_days_range[1], side="right") - 0.5
         rect = plt.Rectangle(
-            (num_stay_points_range[0], time_span_days_range[0]),
-            (num_stay_points_range[1] - num_stay_points_range[0]),
-            (time_span_days_range[1] - time_span_days_range[0]),
+            (x0, y0),
+            x1 - x0,
+            y1 - y0,
             linewidth=2,
             edgecolor=custom_colors[-1],
             facecolor="none",
+            clip_on=False,
+            zorder=5,  # above the axes frame, so edges on the plot boundary stay visible
         )
         ax.add_patch(rect)
 
