@@ -126,7 +126,11 @@ def align(
         {h: v[1] for h, v in hex_to_latlng.items()}
     )
 
-    df["timestamp"] = pd.to_datetime(df["stay_start_timestamp"]).astype(int) // 10**9
+    # seconds since the epoch, whatever the datetime resolution; `.astype(int)` returns
+    # the underlying unit (ns, us, ms), so dividing by 1e9 is only right for ns input
+    df["timestamp"] = (
+        pd.to_datetime(df["stay_start_timestamp"]) - pd.Timestamp("1970-01-01")
+    ) // pd.Timedelta(seconds=1)
     df["zero"] = 0
     df["caid"] = df["caid"].astype(str)
 
