@@ -185,7 +185,12 @@ static double AreaTestStat(const vector<int64_t>& real_time, const vector<int64_
     }
     double ats = 0;
     for (int i = 0; i < n_bins; i++) ats += fabs(simu_freq[i] - real_freq[i]);
-    ats += 0.035 * fabs((real_stay_num + 0.0) / days_real - (simu_stay_num + 0.0) / days_simu);
+    // N term over days with at least one stay (day_num1/day_num2 in 2-DT_Comm.cpp:346); days_real/days_simu
+    // (span minus empty days, Step9CalculateDT.cpp:312) are kept only for the gap bookkeeping above
+    int day_num1 = 1, day_num2 = 1;
+    for (int dd = 1; dd < real_stay_num; dd++) if (timeCorrect(real_time[dd - 1]) / secOneDay != timeCorrect(real_time[dd]) / secOneDay) day_num1++;
+    for (int dd = 1; dd < simu_stay_num; dd++) if (timeCorrect(simu_time[dd - 1]) / secOneDay != timeCorrect(simu_time[dd]) / secOneDay) day_num2++;
+    ats += 0.035 * fabs((real_stay_num + 0.0) / day_num1 - (simu_stay_num + 0.0) / day_num2);
     return ats;
 }
 
