@@ -21,6 +21,11 @@ def _simulate_wrapper(file_index):
     """
     # print(f"[DEBUG] _simulate_wrapper started for file_index={file_index}, pid={os.getpid()}")
     params = _simulation_params
+    # forked workers reseed python's random on start, so the parent's seed never reaches them;
+    # seed each task from the run seed and its file index (same result for any number of workers)
+    if params.get("random_state") is not None:
+        random.seed(int(params["random_state"]) + file_index)
+        np.random.seed(int(params["random_state"]) + file_index)
     result = simulate(
         file_index=file_index,
         other_locations_file=params.get("other_locations_file"),
@@ -553,6 +558,7 @@ def simulate(
 
 def simulate_all_parallel_optimized(
     num_cpus=16,
+    random_state=None,
     other_locations_file="./results/Simulation/otherlocation.txt",
     activeness_file="./results/Simulation/activeness.txt",
     num_days=1,
@@ -578,6 +584,7 @@ def simulate_all_parallel_optimized(
         "users_locations_dir": users_locations_dir,
         "users_parameters_dir": users_parameters_dir,
         "output_dir": output_dir,
+        "random_state": random_state,
         "kwargs": kwargs,
     }
 
@@ -825,6 +832,7 @@ def simulate_sequential(
 # Keep original function for backward compatibility
 def simulate_all_parallel(
     num_cpus=16,
+    random_state=None,
     other_locations_file="./results/Simulation/otherlocation.txt",
     activeness_file="./results/Simulation/activeness.txt",
     num_days=1,
@@ -840,6 +848,7 @@ def simulate_all_parallel(
     # Use optimized version by default
     return simulate_all_parallel_optimized(
         num_cpus=num_cpus,
+        random_state=random_state,
         other_locations_file=other_locations_file,
         activeness_file=activeness_file,
         num_days=num_days,

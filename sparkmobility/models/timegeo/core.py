@@ -381,6 +381,7 @@ class TimeGeo:
         sim_dir = self._paths.simulation
         simulate_all_parallel(
             num_cpus=self.num_cpus,
+            random_state=self.random_state,
             other_locations_file=str(sim_dir / "otherlocation.txt"),
             activeness_file=str(sim_dir / "activeness.txt"),
             num_days=self.num_days,
