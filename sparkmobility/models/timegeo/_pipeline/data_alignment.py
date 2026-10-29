@@ -86,6 +86,10 @@ def align(
         location_column: "h3_id_region",
         type_column: "type",
     }
+    # the contract already has `stay_start_timestamp` (UTC); when another column is the
+    # timestamp, drop it first or the rename leaves two columns with that name
+    if timestamp_column != "stay_start_timestamp" and "stay_start_timestamp" in stay_df.columns:
+        stay_df = stay_df.drop(columns=["stay_start_timestamp"])
     df = stay_df.rename(columns={k: v for k, v in rename.items() if k != v})
 
     missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
@@ -155,7 +159,7 @@ def align(
     # row_group_size=100_000 keeps each Arrow row-group small enough for
     # the C++ binary (which self-caps at 2 GB via setrlimit) to decode in
     # one shot. Without this, C++ OOMs on ~60% of row groups at 46M rows.
-    df[out_cols].to_parquet(output_path, index=False, row_group_size=100_000)
+    _to_parquet(df[out_cols], output_path, row_group_size=100_000)
     logger.info("aligned data saved to %s", output_path)
     return output_path
 
@@ -178,6 +182,8 @@ def _align_spark(
         type_column: "type",
     }
     df = stay_df
+    if timestamp_column != "stay_start_timestamp" and "stay_start_timestamp" in df.columns:
+        df = df.drop("stay_start_timestamp")   # same reason as the pandas path
     for old, new in rename.items():
         if old != new and old in df.columns:
             df = df.withColumnRenamed(old, new)
@@ -249,12 +255,25 @@ def _align_spark(
     return output_path
 
 
+def _to_parquet(df: pd.DataFrame, path: Path, **kwargs) -> None:
+    """Write with text columns as Arrow ``string``: pandas >= 3 writes them as
+    ``large_string``, which the C++ binary's ``arrow::StringArray`` cast rejects
+    (it then reads zero records)."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    table = pa.Table.from_pandas(df, preserve_index=False)
+    fields = [pa.field(f.name, pa.string(), f.nullable) if pa.types.is_large_string(f.type) else f
+              for f in table.schema]
+    pq.write_table(table.cast(pa.schema(fields)), path, **kwargs)
+
+
 def remove_redundant_stays(input_path: Path, output_path: Path) -> Path:
     """Drop duplicates on (caid, h3_id_region, timestamp)."""
     df = pd.read_parquet(input_path)
     before = len(df)
     df = df.drop_duplicates(subset=["caid", "h3_id_region", "timestamp"], keep="first")
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(output_path, index=False)
+    _to_parquet(df, output_path)
     logger.info("removed %d redundant stays (%d remaining)", before - len(df), len(df))
     return output_path

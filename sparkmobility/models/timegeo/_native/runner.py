@@ -145,7 +145,7 @@ class CppModuleHandler:
         grid: int = 0,
         seed: int = -1,
         quiet: bool = True,
-        timeout: int = 3600,
+        timeout: int = 24 * 3600,   # a full fit of ~12k users takes about 2 h; 3600 killed healthy runs
     ) -> bool:
         """Run parameter generation and write outputs under ``output_dir``."""
         output_dir = Path(output_dir)

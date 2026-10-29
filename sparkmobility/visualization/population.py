@@ -181,7 +181,8 @@ def plot_flow(
         zoom_start=10,
         width=900,
         height=630,
-        tiles="OpenStreetMap",
+        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+        attr="Esri",
     )
 
     for idx, row in df.iterrows():
@@ -234,7 +235,8 @@ def plot_count(df, h3_index_col_name, hex_resolution):
         zoom_start=10,
         width=900,
         height=630,
-        tiles="OpenStreetMap",
+        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+        attr="Esri",
     )
     colormap = linear.Blues_09.scale(
         count_df["log_count"].min(), count_df["log_count"].max()
